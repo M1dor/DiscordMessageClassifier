@@ -1,5 +1,7 @@
 import ast
+from typing import Counter
 import rules as  R
+from datetime import datetime, timedelta
 
 def is_in_specified_channels(message, channels):
     if message.channel.id not in channels:
@@ -45,6 +47,8 @@ def eval_node(node, context, message):
                 return R.is_in_specified_categories(message, data["categories"])
             case "has_specified_role":
                 return R.has_specified_role(message, data["roles"])
+            case "request_count":
+                return R.request_count(context, message)
             case _:
                 raise ValueError(f"Unknown variable '{name}' in expression.")
     else:
@@ -65,3 +69,34 @@ def evaluate_expression(context, message):
     tree = ast.parse(expr_str, mode="eval")
 
     return eval_node(tree.body, context, message)
+
+
+def request_count(context, message):
+    
+    user_id = message.author.id
+    message_time = message.created_at
+    max_per_user = context["max_per_user"]
+    max_users = context["max_users"]
+    counter = context.setdefault("message_counter", {})
+    delete_after = timedelta(hours=context["delete_after_hours"])
+
+    # Add the user to the counter if not yet present, as long as we haven't reached max_users in which case delete the oldest user
+    if user_id not in counter:
+        if len(counter) >= max_users:
+            oldest_user = next(iter(counter))
+            del counter[oldest_user]
+
+        counter[user_id] = [message_time]
+        return True
+
+    # Clean up timestamps older than delete_after
+    timestamps = counter[user_id]
+    timestamps = [t for t in timestamps if message_time - t < delete_after]
+    counter[user_id] = timestamps
+
+    # If the user has free slots, add the current timestamp and allow the request
+    if len(timestamps) < max_per_user:
+        counter[user_id].append(message_time)
+        return True
+
+    return False
